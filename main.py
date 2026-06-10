@@ -1,27 +1,67 @@
+# pip install --upgrade langchain langchain-community langchain-text-splitters langchain-openai langchain-chroma pypdf python-dotenv
+
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_chroma import Chroma
+from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_classic.retrievers import MultiQueryRetriever
+from langchain_classic.chains import create_retrieval_chain
+from langchain_classic.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate
 
 loader = PyPDFLoader("unsu.pdf")
 pages = loader.load_and_split()
 
-# PDF 파일에서 페이지 단위로 로드된 문서 객체 출력
-# 텍스트 정크 (Chunk) 단위로 쪼개기
-# LLM이 처리하기 좋게 문서를 더 작은 단위(chunk)로 잘게 쪼갠다.
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size = 300,           # 각 텍스트 조각의 최대 길이 (문자 수)
-    chunk_overlap = 20,         # 텍스트 조각 간의 겹치는 길이 (문자 수). 문맥이 끊기는 것을 방지하기 위해 보통 10~20% 정도 겹치게 설정함
-    length_function = len,      # 텍스트 길이를 계산하는 함수 (기본값은 len)
-    is_separator_regex = False, # 구분자(separator)가 정규 표현식인지 여부 (기본값은 False)
+    chunk_size = 300,           # 하나의 청크가 가질 최대 글자 수
+    chunk_overlap  = 20,        # 청크 간 문맥 연결을 위해 겹칠 글자 수
+    length_function = len,      # 길이 측정 기준 (기본 문자열 길이)
+    is_separator_regex = False, # 구분 기호의 정규표현식 해석 여부
 )
 
-# PDF 페이지 단위로 로드된 문서 객체를 텍스트 조각(Chunk) 단위로 분할 (300자)
 texts = text_splitter.split_documents(pages)
+embeddings_model = OpenAIEmbeddings(model="text-embedding-3-small")
+db = Chroma.from_documents(texts, embeddings_model)
+# LLM과 Retriever를 활용한 RAG 체인 구축
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+# MultiQueryRetriever는 LLM을 활용하여 검색 쿼리를 생성하는 리트리버입니다.
+retriever_from_llm = MultiQueryRetriever.from_llm(
+    retriever=db.as_retriever(), 
+    llm=llm
+)
 
-if texts:
-    print("--- [첫 번째 텍스트 조각(Chunk) 객체 출력] ---")
-    print(texts[0])
-    
-    print("\n--- [첫 번째 조각의 실제 텍스트 내용만 출력] ---")
-    print(texts[0].page_content)
-else:
-    print("분할된 텍스트 조각이 없습니다. PDF 파일 내용을 확인해 주세요.")
+# AI 역할 지정
+system_prompt = (
+    "너는 질문-답변을 돕는 유능한 비서야. "
+    "아래 제공된 맥락(context)만을 사용하여 질문에 답해줘. "
+    "답을 모르면 모른다고 하고, 절대 답변을 지어내지 마.\n\n"
+    "{context}"
+)
+prompt = ChatPromptTemplate.from_messages([
+    ("system", system_prompt),
+    ("human", "{input}"),
+])
+
+question_answer_chain = create_stuff_documents_chain(llm, prompt)
+
+# retriever = db.as_retriever()
+
+rag_chain = create_retrieval_chain(retriever_from_llm, question_answer_chain)
+
+# 질문
+# question = "아내가 사달라고 했던 음식들이 무엇이야?"
+# question = "아들의 이름을 동물적 은유로 표현한 단어가 있는 것 같아. 그게 뭐야?"
+question = "개똥이는 누구야? (우의화, 풍자화, 의인화, 은유화 까지 포함해서 확인)"
+response = rag_chain.invoke({"input": question})
+
+# 결과 출력
+# print(f"검색된 참조 문서 개수: {len(response.get("context", []))}")
+# print(f"답변: {response['answer']}")
+
+print("====[최종답변]====")
+print(response['answer'])
+
