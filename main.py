@@ -125,4 +125,5 @@ if uploaded_file is not None:
                     document_chain
                 )
 
-                qa_chain.invoke(    {    "input": question    }      )
+                response = qa_chain.invoke(    {    "input": question    }      )
+                st.write(response["answer"])
