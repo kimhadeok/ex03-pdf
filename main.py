@@ -125,5 +125,16 @@ if uploaded_file is not None:
                     document_chain
                 )
 
-                response = qa_chain.invoke(    {    "input": question    }      )
-                st.write(response["answer"])
+                # response = qa_chain.invoke(    {    "input": question    }      )
+                # st.write(response["answer"])
+
+                full_response = ""
+                for chunk in qa_chain.stream({"input": question}):
+                    # qa_chain은 'answer' 키에 답변을 담아 반환하는 경우가 많습니다.
+                    if "answer" in chunk:
+                        token = chunk["answer"]
+                        full_response += token
+                        chat_box.markdown(full_response)
+                    elif isinstance(chunk, str): # 단순히 텍스트만 오는 경우 대응
+                        full_response += chunk
+                        chat_box.markdown(full_response)
